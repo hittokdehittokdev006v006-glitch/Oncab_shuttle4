@@ -51,6 +51,7 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ onNotify }) => {
   const reportRows = revenueData?.report || [];
   const ownerRows = revenueData?.owner_breakdown || [];
   const routeRows = revenueData?.route_breakdown || [];
+  const tripRows = revenueData?.trip_breakdown || [];
   const ownerOptions = revenueData?.owner_options || [];
   const ownerNameById = new Map(ownerOptions.map((owner: any) => [String(owner.owner_id), owner.owner_name]));
 
@@ -216,6 +217,51 @@ export const ReportsPage: React.FC<ReportsPageProps> = ({ onNotify }) => {
               ))}
             </Table>
           </Card>}
+
+          <Card title="Trip, Vehicle & Driver Analysis">
+            <Table
+              headers={[
+                ...(isAdmin ? ['Owner'] : []),
+                'Trip / Date',
+                'Route',
+                'Vehicle',
+                'Driver',
+                'Distinct seats',
+                'Bookings',
+                'Trip status',
+                'Revenue',
+              ]}
+              loading={loading}
+              empty={tripRows.length === 0}
+              emptyMessage="No trip, vehicle, or driver details match this period"
+            >
+              {tripRows.map((trip: any) => (
+                <Tr key={`${trip.trip_id}-${trip.travel_date}`}>
+                  {isAdmin && <Td>{ownerNameById.get(String(trip.owner_id)) || `Owner #${trip.owner_id}`}</Td>}
+                  <Td>
+                    <div className="font-medium text-white">{trip.schedule_code || `Trip #${trip.trip_id}`}</div>
+                    <div className="text-xs text-slate-400">{trip.travel_date || trip.trip_date || 'Date not set'} · {String(trip.departure_time || '').slice(0, 5) || 'Time not set'}</div>
+                  </Td>
+                  <Td>
+                    <div className="font-medium text-white">{trip.route_name}</div>
+                    <div className="text-xs text-slate-400">{trip.route_code || '—'} · {trip.origin_city || '—'} → {trip.destination_city || '—'}</div>
+                  </Td>
+                  <Td>
+                    <div className="font-medium text-white">{trip.vehicle?.registration_number || 'Not assigned'}</div>
+                    <div className="text-xs text-slate-400">{trip.vehicle?.model || 'Model not set'} · {trip.vehicle?.status || '—'}</div>
+                  </Td>
+                  <Td>
+                    <div className="font-medium text-white">{trip.driver?.name || 'Not assigned'}</div>
+                    <div className="text-xs text-slate-400">{trip.driver?.mobile || 'No phone'} · {trip.driver?.status || '—'}</div>
+                  </Td>
+                  <Td>{trip.distinct_seats}</Td>
+                  <Td>{trip.booking_count}</Td>
+                  <Td>{trip.status || '—'}</Td>
+                  <Td className="font-semibold text-emerald-300">₹{Number(trip.revenue || 0).toLocaleString('en-IN')}</Td>
+                </Tr>
+              ))}
+            </Table>
+          </Card>
         </>
       )}
     </div>

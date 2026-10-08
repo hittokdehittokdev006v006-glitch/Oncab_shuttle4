@@ -108,9 +108,12 @@ exports.stats = async (req, res, next) => {
     });
 
     // Recent bookings
+    const recentBookingWhere = isOwner
+      ? { ...ownerBookingWhere, booking_status: { [Op.ne]: 'cancelled' } }
+      : ownerBookingWhere;
     const recentBookings = await Booking.findAll({
       attributes: ['id', 'passenger_name', 'booking_reference', 'booking_status'],
-      where: ownerBookingWhere,
+      where: recentBookingWhere,
       limit: 10,
       order: [['created_at', 'DESC']],
       include: [
@@ -249,12 +252,12 @@ exports.revenueReport = async (req, res, next) => {
 
     const tripIds = [...new Set(bookings.map((booking) => Number(booking.trip_id)))];
     const trips = tripIds.length ? await Trip.findAll({
-      attributes: ['id', 'route_id'],
+      attributes: ['id', 'route_id', 'schedule_code', 'trip_date', 'departure_time', 'status', 'vehicle_id', 'driver_id'],
       where: { id: { [Op.in]: tripIds } },
       include: [
-        { model: Route, as: 'route', attributes: ['id', 'route_name'], required: false },
-        { model: Vehicle, as: 'vehicle', attributes: ['id', 'owner_id'], required: false },
-        { model: Driver, as: 'driver', attributes: ['id', 'owner_id'], required: false },
+        { model: Route, as: 'route', attributes: ['id', 'route_name', 'route_code', 'origin_city', 'destination_city'], required: false },
+        { model: Vehicle, as: 'vehicle', attributes: ['id', 'owner_id', 'registration_number', 'company_model', 'status'], required: false },
+        { model: Driver, as: 'driver', attributes: ['id', 'owner_id', 'name', 'mobile', 'status'], required: false },
       ],
     }) : [];
     const tripById = new Map(trips.map((trip) => [Number(trip.id), trip]));
@@ -264,15 +267,17 @@ exports.revenueReport = async (req, res, next) => {
       if (!trip) continue;
       const vehicleOwnerId = trip.vehicle?.owner_id;
       const driverOwnerId = trip.driver?.owner_id;
-      const ownerId = vehicleOwnerId || driverOwnerId || null;
-      if (!ownerId || (isOwner && Number(ownerId) !== Number(req.user.id))) continue;
+      const ownerMatches = Number(vehicleOwnerId) === Number(req.user.id) || Number(driverOwnerId) === Number(req.user.id);
+      const ownerId = isOwner ? Number(req.user.id) : Number(vehicleOwnerId || driverOwnerId || 0) || null;
+      if (!ownerId || (isOwner && !ownerMatches)) continue;
 
       const tripDateKey = `${Number(trip.id)}:${booking.travel_date}`;
       let group = tripSeatGroups.get(tripDateKey);
       if (!group) {
-        group = { trip, ownerId: Number(ownerId), seats: new Map() };
+        group = { trip, ownerId: Number(ownerId), travelDate: booking.travel_date, seats: new Map(), bookings: new Set() };
         tripSeatGroups.set(tripDateKey, group);
       }
+      group.bookings.add(Number(booking.id));
       const bookingDate = new Date(booking.created_at);
       const seatNumbers = SeatReservationService.parseSeatNumbers(booking.seat_numbers);
       const bookingSeatCount = seatNumbers.length || Math.max(1, Number(booking.total_seats) || 1);
@@ -298,8 +303,40 @@ exports.revenueReport = async (req, res, next) => {
     const periodOwnerTotals = new Map();
     const ownerTotals = new Map();
     const routeTotals = new Map();
+    const tripBreakdown = [];
     for (const group of tripSeatGroups.values()) {
       const routeId = Number(group.trip.route_id);
+      let tripRevenue = 0;
+      for (const seat of group.seats.values()) tripRevenue = addMoney(tripRevenue, seat.fare);
+      tripBreakdown.push({
+        owner_id: group.ownerId,
+        trip_id: Number(group.trip.id),
+        schedule_code: group.trip.schedule_code,
+        travel_date: group.travelDate,
+        trip_date: group.trip.trip_date,
+        departure_time: group.trip.departure_time,
+        status: group.trip.status,
+        route_id: routeId,
+        route_name: group.trip.route?.route_name || `Route #${routeId}`,
+        route_code: group.trip.route?.route_code || null,
+        origin_city: group.trip.route?.origin_city || null,
+        destination_city: group.trip.route?.destination_city || null,
+        vehicle: group.trip.vehicle ? {
+          id: group.trip.vehicle.id,
+          registration_number: group.trip.vehicle.registration_number,
+          model: group.trip.vehicle.company_model,
+          status: group.trip.vehicle.status,
+        } : null,
+        driver: group.trip.driver ? {
+          id: group.trip.driver.id,
+          name: group.trip.driver.name,
+          mobile: group.trip.driver.mobile,
+          status: group.trip.driver.status,
+        } : null,
+        distinct_seats: group.seats.size,
+        booking_count: group.bookings.size,
+        revenue: tripRevenue,
+      });
       let ownerTotal = ownerTotals.get(group.ownerId);
       if (!ownerTotal) {
         ownerTotal = { owner_id: group.ownerId, owner_name: group.trip.vehicle?.owner?.name || group.trip.driver?.owner?.name || null, revenue: 0, distinct_seats: 0, trips: 0 };
@@ -387,6 +424,9 @@ exports.revenueReport = async (req, res, next) => {
       owner_breakdown: filteredOwners,
       owner_options: ownerBreakdown.map(({ owner_id, owner_name }) => ({ owner_id, owner_name })),
       route_breakdown: routeBreakdown,
+      trip_breakdown: tripBreakdown
+        .filter((trip) => !selectedOwnerId || trip.owner_id === selectedOwnerId)
+        .sort((a, b) => String(b.travel_date || '').localeCompare(String(a.travel_date || '')) || b.trip_id - a.trip_id),
     } });
   } catch (err) {
     next(err);

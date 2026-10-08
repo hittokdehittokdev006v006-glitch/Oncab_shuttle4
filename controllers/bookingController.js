@@ -8,6 +8,7 @@ const { calculateCouponDiscount } = require('../utils/coupon');
 const { resolveFare } = require('../utils/fareCalculator');
 const SeatReservationService = require('../services/seatReservationService');
 const { confirmPaidBooking } = require('../services/bookingConfirmationService');
+const { hasRole } = require('../utils/roles');
 
 const calculateDistanceMeters = (lat1, lon1, lat2, lon2) => {
   if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
@@ -70,6 +71,30 @@ exports.list = async (req, res, next) => {
     if (payment_status) where.payment_status = payment_status;
     if (trip_id) where.trip_id = trip_id;
     if (from_date && to_date) where.travel_date = { [Op.between]: [from_date, to_date] };
+
+    if (hasRole(req.user, 'owner')) {
+      const [vehicles, drivers] = await Promise.all([
+        Vehicle.findAll({ attributes: ['id'], where: { owner_id: req.user.id }, raw: true }),
+        Driver.findAll({ attributes: ['id'], where: { owner_id: req.user.id }, raw: true }),
+      ]);
+      const vehicleIds = vehicles.map((vehicle) => vehicle.id);
+      const driverIds = drivers.map((driver) => driver.id);
+      const assignedTrips = vehicleIds.length || driverIds.length
+        ? await Trip.findAll({
+          attributes: ['id'],
+          where: { [Op.or]: [
+            ...(vehicleIds.length ? [{ vehicle_id: { [Op.in]: vehicleIds } }] : []),
+            ...(driverIds.length ? [{ driver_id: { [Op.in]: driverIds } }] : []),
+          ] },
+          raw: true,
+        })
+        : [];
+      const assignedTripIds = assignedTrips
+        .map((trip) => Number(trip.id))
+        .filter((assignedTripId) => !trip_id || assignedTripId === Number(trip_id));
+      where.trip_id = { [Op.in]: assignedTripIds };
+      where[Op.and] = [...(where[Op.and] || []), { booking_status: { [Op.ne]: 'cancelled' } }];
+    }
 
     const { count, rows } = await Booking.findAndCountAll({ where, include: BOOKING_INCLUDE, offset, limit: lim, order: [['created_at', 'DESC']] });
     res.json({ success: true, data: rows, pagination: { total: count, page: p, limit: lim, pages: Math.ceil(count / lim) } });
@@ -229,6 +254,9 @@ exports.cancel = async (req, res, next) => {
 // ── Cancelled Bookings ─────────────────────────────────────
 exports.cancelledList = async (req, res, next) => {
   try {
+    if (hasRole(req.user, 'owner')) {
+      return res.status(403).json({ success: false, message: 'Cancelled tickets are not available to owners' });
+    }
     const { page, limit, search } = req.query;
     const { offset, limit: lim, page: p } = buildPagination(page, limit);
     const where = { booking_status: 'cancelled' };

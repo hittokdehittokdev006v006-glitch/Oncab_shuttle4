@@ -620,7 +620,8 @@ const AppInner: React.FC = () => {
 
   const activeViewPermission = VIEW_PERMISSIONS[currentView];
   const approvalRoleAllowed = currentView !== 'owner-requests' || hasRole(user, 'admin') || hasRole(user, 'owner');
-  const activeView = approvalRoleAllowed && (!activeViewPermission || hasPermission(activeViewPermission)) ? currentView : 'dashboard';
+  const cancelledViewAllowed = currentView !== 'cancelled-tickets' || !hasRole(user, 'owner');
+  const activeView = approvalRoleAllowed && cancelledViewAllowed && (!activeViewPermission || hasPermission(activeViewPermission)) ? currentView : 'dashboard';
 
   const renderPage = () => {
     const props = pageProps;
