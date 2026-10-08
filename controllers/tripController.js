@@ -248,7 +248,13 @@ exports.list = async (req, res, next) => {
         { '$driver.name$': { [Op.like]: `%${search}%` } },
       ];
     }
-    if (status) where.status = status;
+    if (status) {
+      if (status.toLowerCase() !== 'all') {
+        where.status = status;
+      }
+    } else {
+      where.status = { [Op.notIn]: ['Cancelled', 'cancelled'] };
+    }
     if (route_id) where.route_id = route_id;
     if (driver_id) where.driver_id = driver_id;
     if (trip_date) where.trip_date = trip_date;
@@ -261,10 +267,17 @@ exports.list = async (req, res, next) => {
         Driver.findAll({ attributes: ['id'], where: { owner_id: req.user.id }, raw: true }),
         Vehicle.findAll({ attributes: ['id'], where: { owner_id: req.user.id }, raw: true }),
       ]);
-      where[Op.or] = [
-        { driver_id: { [Op.in]: ownedDrivers.map((driver) => driver.id) } },
-        { vehicle_id: { [Op.in]: ownedVehicles.map((vehicle) => vehicle.id) } },
-      ];
+      const ownerCond = {
+        [Op.or]: [
+          { driver_id: { [Op.in]: ownedDrivers.map((driver) => driver.id) } },
+          { vehicle_id: { [Op.in]: ownedVehicles.map((vehicle) => vehicle.id) } },
+        ],
+      };
+      if (where[Op.and]) {
+        where[Op.and].push(ownerCond);
+      } else {
+        where[Op.and] = [ownerCond];
+      }
     }
 
     const { count, rows } = await Trip.findAndCountAll({
