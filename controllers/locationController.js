@@ -28,11 +28,9 @@ exports.dashboard = async (req, res, next) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
     const isOwner = hasRole(req.user, 'owner');
-    const ownerVehicleWhere = isOwner ? { owner_id: req.user.id } : {};
-    const ownerDriverWhere = isOwner ? { owner_id: req.user.id } : {};
-    const [vehicles, trips, routes] = await Promise.all([
+    const [vehicles, ownedDrivers] = await Promise.all([
       Vehicle.findAll({
-        where: ownerVehicleWhere,
+        where: isOwner ? { owner_id: req.user.id } : {},
         attributes: ['id', 'registration_number', 'company_model', 'status', 'latitude', 'longitude', 'driver_id', 'bus_type_id', 'owner_id'],
         include: [{
           model: Driver,
@@ -42,11 +40,21 @@ exports.dashboard = async (req, res, next) => {
         }],
         order: [['registration_number', 'ASC']],
       }),
-      Trip.findAll({
-        where: {
-          status: { [Op.in]: ['Scheduled', 'Active', 'Delayed'] },
-          [Op.or]: [{ trip_date: null }, { trip_date: { [Op.gte]: today } }],
-        },
+      isOwner ? Driver.findAll({ attributes: ['id'], where: { owner_id: req.user.id }, raw: true }) : Promise.resolve([]),
+    ]);
+    const ownedVehicleIds = vehicles.map((vehicle) => Number(vehicle.id));
+    const ownedDriverIds = ownedDrivers.map((driver) => Number(driver.id));
+    const assignmentConditions = [
+      ...(ownedVehicleIds.length ? [{ vehicle_id: { [Op.in]: ownedVehicleIds } }] : []),
+      ...(ownedDriverIds.length ? [{ driver_id: { [Op.in]: ownedDriverIds } }] : []),
+    ];
+    const tripWhere = {
+      status: { [Op.in]: ['Scheduled', 'Active', 'Delayed'] },
+      [Op.or]: [{ trip_date: null }, { trip_date: { [Op.gte]: today } }],
+      ...(isOwner ? { [Op.and]: [{ [Op.or]: assignmentConditions.length ? assignmentConditions : [{ id: { [Op.in]: [] } }] }] } : {}),
+    };
+    const trips = await Trip.findAll({
+        where: tripWhere,
         include: [
           { model: Route, as: 'route', include: [{ model: Stop, as: 'stops', attributes: ['id', 'stop_name', 'latitude', 'longitude', 'stop_sequence'], required: false }] },
           {
@@ -59,25 +67,16 @@ exports.dashboard = async (req, res, next) => {
           { model: Vehicle, as: 'vehicle', attributes: ['id', 'registration_number'], required: false },
         ],
         order: [['trip_date', 'ASC'], ['departure_time', 'ASC']],
-      }),
-      Route.findAll({
+      });
+    const routeIds = [...new Set(trips.map((trip) => Number(trip.route_id)))];
+    const routes = await Route.findAll({
+        where: isOwner ? { id: { [Op.in]: routeIds } } : {},
         attributes: ['id', 'route_name', 'route_code', 'origin_city', 'destination_city', 'status'],
         include: [{ model: Stop, as: 'stops', attributes: ['id', 'stop_name', 'latitude', 'longitude', 'stop_sequence'], required: false }],
         order: [['route_name', 'ASC']],
-      }),
-    ]);
+      });
 
-    const ownedVehicleIds = vehicles.map((vehicle) => Number(vehicle.id));
-    const ownedDriverIds = vehicles.map((vehicle) => Number(vehicle.driver_id)).filter(Boolean);
-    const filteredTrips = isOwner
-      ? trips.filter((trip) => {
-          const tripVehicleId = Number(trip.vehicle_id);
-          const tripDriverId = Number(trip.driver_id);
-          return (tripVehicleId && ownedVehicleIds.includes(tripVehicleId)) || (tripDriverId && ownedDriverIds.includes(tripDriverId));
-        })
-      : trips;
-
-    const serializedTrips = filteredTrips.map((trip) => {
+    const serializedTrips = trips.map((trip) => {
       const data = trip.toJSON();
       data.route?.stops?.sort((a, b) => a.stop_sequence - b.stop_sequence);
       return data;

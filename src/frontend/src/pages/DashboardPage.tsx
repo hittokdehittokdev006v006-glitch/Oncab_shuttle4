@@ -122,7 +122,6 @@ export const DashboardPage: React.FC = () => {
             <div className="space-y-4 p-5">
               {[
                 { label: 'Confirmed bookings', value: summary.bookings.confirmed, color: '#10b981' },
-                { label: 'Cancelled bookings', value: summary.bookings.cancelled, color: '#ef4444' },
               ].map((item) => (
                 <div key={item.label}>
                   <div className="flex justify-between text-xs mb-1">

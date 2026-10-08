@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { bookingsAPI } from '../services/api';
 import { Card, Table, Tr, Td, Pagination, SearchInput, Button, Select, StatusBadge, Modal, ConfirmDialog, ErrorState, Badge } from '../components/ui';
+import { useAuth } from '../contexts/AuthContext';
+import { hasRole } from '../utils/roles';
 import { XCircle, Eye, Calendar, MapPin, User, CreditCard, Ticket, Phone, ArrowRight, CheckCircle2, Tag, RefreshCw, Navigation, Compass, Radio, Loader2, ShieldCheck, Bus } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -71,6 +73,8 @@ interface BookingsPageProps {
 }
 
 export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
+  const { user } = useAuth();
+  const isOwner = hasRole(user, 'owner');
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -186,13 +190,13 @@ export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
 
   const parseSeats = (seatVal: any) => {
     if (!seatVal) return [];
-    if (Array.isArray(seatVal)) return seatVal;
+    if (Array.isArray(seatVal)) return [...new Set(seatVal)];
     if (typeof seatVal === 'string') {
       try {
         const parsed = JSON.parse(seatVal);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) return [...new Set(parsed)];
       } catch {
-        return seatVal.split(',').map((s) => s.trim()).filter(Boolean);
+        return [...new Set(seatVal.split(',').map((s) => s.trim()).filter(Boolean))];
       }
       return [seatVal];
     }
@@ -205,10 +209,9 @@ export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
     'Trip & Route',
     'Pickup → Dropoff',
     'Date & Seats',
-    'Fare Amount',
-    'Payment',
+    ...(!isOwner ? ['Fare Amount', 'Payment'] : []),
     'Status',
-    'Actions',
+    ...(!isOwner ? ['Actions'] : []),
   ];
 
   const detail = fullBookingDetail || viewBooking;
@@ -266,11 +269,11 @@ export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
             { value: 'confirmed', label: 'Confirmed' },
             { value: 'completed', label: 'Completed' },
             { value: 'pending', label: 'Pending' },
-            { value: 'cancelled', label: 'Cancelled' },
+            ...(!isOwner ? [{ value: 'cancelled', label: 'Cancelled' }] : []),
           ]}
           placeholder="All Booking Statuses"
         />
-        <Select
+        {!isOwner && <Select
           value={paymentStatusFilter}
           onChange={setPaymentStatusFilter}
           options={[
@@ -280,7 +283,7 @@ export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
             { value: 'refunded', label: 'Refunded' },
           ]}
           placeholder="Payment Status"
-        />
+        />}
         {(search || bookingStatusFilter || paymentStatusFilter) && (
           <Button
             variant="ghost"
@@ -363,22 +366,22 @@ export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
                         </span>
                       </div>
                     </Td>
-                    <Td>
+                    {!isOwner && <Td>
                       <div className="text-emerald-400 text-sm font-bold">₹{b.final_amount}</div>
                       {b.discount_amount > 0 && (
                         <div className="text-slate-400 text-xs">
                           <span className="line-through">₹{b.total_fare}</span> (-₹{b.discount_amount})
                         </div>
                       )}
-                    </Td>
-                    <Td>
+                    </Td>}
+                    {!isOwner && <Td>
                       <div className="space-y-1">
                         <StatusBadge status={b.payment_status} />
                         {b.payment_method && (
                           <div className="text-slate-400 text-[11px] capitalize">{b.payment_method}</div>
                         )}
                       </div>
-                    </Td>
+                    </Td>}
                     <Td>
                       <div className="space-y-1">
                         <StatusBadge status={b.booking_status} />
@@ -399,7 +402,7 @@ export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
                         )}
                       </div>
                     </Td>
-                    <Td>
+                    {!isOwner && <Td>
                       <div className="flex items-center gap-1.5">
                         <Button
                           variant="secondary"
@@ -428,7 +431,7 @@ export const BookingsPage: React.FC<BookingsPageProps> = ({ onNotify }) => {
                           </Button>
                         )}
                       </div>
-                    </Td>
+                    </Td>}
                   </Tr>
                 );
               })}
