@@ -100,7 +100,7 @@ exports.list = async (req, res, next) => {
     res.json({ success: true, data: rows, pagination: { total: count, page: p, limit: lim, pages: Math.ceil(count / lim) } });
   } catch (err) {
     next(err);
-  }
+  }git 
 };
 
 // ── Get Booking ────────────────────────────────────────────
