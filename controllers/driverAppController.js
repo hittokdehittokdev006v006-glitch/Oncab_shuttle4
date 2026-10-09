@@ -252,7 +252,7 @@ exports.getAssignedTrips = async (req, res, next) => {
         {
           model: Booking,
           as: 'bookings',
-          where: { booking_status: 'confirmed' },
+          where: { booking_status: 'confirmed', payment_status: 'paid' },
           required: false,
           attributes: ['id', 'boarding_status', 'seat_numbers', 'total_seats'],
         },
@@ -367,7 +367,13 @@ exports.getPassengerManifest = async (req, res, next) => {
       return res.status(404).json({ status: 404, success: false, message: 'Trip assignment not found' });
     }
 
-    const whereBooking = { trip_id: tripId };
+    const whereBooking = {
+      trip_id: tripId,
+      [Op.or]: [
+        { booking_status: 'confirmed', payment_status: 'paid' },
+        { booking_status: 'cancelled', payment_status: { [Op.in]: ['paid', 'refunded', 'partial_refund', 'pending'] } },
+      ],
+    };
     if (boarding_status) {
       whereBooking.boarding_status = boarding_status;
     }
@@ -398,7 +404,10 @@ exports.getPassengerManifest = async (req, res, next) => {
       total_seats: b.total_seats,
       origin_stop: b.origin_stop ? b.origin_stop.stop_name : 'Default Station',
       destination_stop: b.destination_stop ? b.destination_stop.stop_name : 'Destination Station',
-      boarding_status: b.boarding_status,
+      boarding_status: b.booking_status === 'cancelled' ? 'cancelled' : b.boarding_status,
+      booking_status: b.booking_status,
+      cancellation_reason: b.cancellation_reason || null,
+      cancelled_at: b.cancelled_at || null,
       boarding_pass_code: b.boarding_pass_code,
       boarded_at: b.boarded_at,
       payment_status: b.payment_status,
@@ -533,6 +542,31 @@ exports.scanBoardingPass = async (req, res, next) => {
       });
     }
 
+    if (booking.booking_status === 'cancelled') {
+      return res.status(400).json({
+        status: 400,
+        success: false,
+        message: `This ticket was cancelled by the passenger (${booking.cancellation_reason || 'Cancelled'}). Boarding is not allowed.`,
+        data: {
+          booking_id: booking.id,
+          booking_reference: booking.booking_reference,
+          passenger_name: booking.passenger_name,
+          booking_status: 'cancelled',
+          boarding_status: 'cancelled',
+          cancellation_reason: booking.cancellation_reason,
+          cancelled_at: booking.cancelled_at,
+        },
+      });
+    }
+
+    if (booking.booking_status !== 'confirmed' || booking.payment_status !== 'paid') {
+      return res.status(400).json({
+        status: 400,
+        success: false,
+        message: 'This booking is not confirmed or payment is pending/failed',
+      });
+    }
+
     // Validation 1: Match Driver Trip
     if (targetTripId && parseInt(booking.trip_id) !== parseInt(targetTripId)) {
       return res.status(400).json({
@@ -615,6 +649,22 @@ exports.confirmBoarding = async (req, res, next) => {
       return res.status(404).json({ status: 404, success: false, message: 'Booking not found' });
     }
 
+    if (booking.booking_status === 'cancelled') {
+      return res.status(400).json({
+        status: 400,
+        success: false,
+        message: `Cannot board passenger. Booking was cancelled (${booking.cancellation_reason || 'Cancelled by passenger'}).`,
+      });
+    }
+
+    if (booking.booking_status !== 'confirmed' || booking.payment_status !== 'paid') {
+      return res.status(400).json({
+        status: 400,
+        success: false,
+        message: 'Cannot board passenger. Booking is not confirmed or payment is pending/failed',
+      });
+    }
+
     if (trip_id && parseInt(booking.trip_id) !== parseInt(trip_id)) {
       return res.status(400).json({ status: 400, success: false, message: 'Booking does not match specified trip' });
     }
@@ -686,6 +736,8 @@ exports.manualVerifyBoarding = async (req, res, next) => {
     const booking = await Booking.findOne({
       where: {
         trip_id,
+        booking_status: 'confirmed',
+        payment_status: 'paid',
         [Op.or]: [
           { booking_reference: query },
           { passenger_mobile: query },
@@ -903,7 +955,7 @@ exports.getDriverHome = async (req, res, next) => {
       include: [
         { model: Route, as: 'route', include: [{ model: Stop, as: 'stops' }] },
         { model: Vehicle, as: 'vehicle', include: [{ model: BusType, as: 'bus_type' }] },
-        { model: Booking, as: 'bookings', where: { booking_status: 'confirmed' }, required: false },
+        { model: Booking, as: 'bookings', where: { booking_status: 'confirmed', payment_status: 'paid' }, required: false },
       ],
       order: [['status', 'ASC'], ['departure_time', 'ASC']],
     });
@@ -984,7 +1036,7 @@ exports.getCurrentStop = async (req, res, next) => {
       where: { id: req.params.id, driver_id: req.driver.id },
       include: [
         { model: Route, as: 'route', include: [{ model: Stop, as: 'stops' }] },
-        { model: Booking, as: 'bookings', where: { booking_status: 'confirmed' }, required: false },
+        { model: Booking, as: 'bookings', where: { booking_status: 'confirmed', payment_status: 'paid' }, required: false },
       ],
     });
 
@@ -1092,7 +1144,10 @@ exports.getStopPassengers = async (req, res, next) => {
       where: {
         trip_id: tripId,
         origin_stop_id: stopId,
-        booking_status: 'confirmed',
+        [Op.or]: [
+          { booking_status: 'confirmed', payment_status: 'paid' },
+          { booking_status: 'cancelled', payment_status: { [Op.in]: ['paid', 'refunded', 'partial_refund', 'pending'] } },
+        ],
       },
       order: [['id', 'ASC']],
     });
@@ -1103,7 +1158,10 @@ exports.getStopPassengers = async (req, res, next) => {
       passenger_name: b.passenger_name,
       passenger_mobile_masked: maskMobile(b.passenger_mobile),
       seat: Array.isArray(b.seat_numbers) ? b.seat_numbers.join(', ') : b.seat_numbers,
-      boarding_status: b.boarding_status,
+      boarding_status: b.booking_status === 'cancelled' ? 'cancelled' : b.boarding_status,
+      booking_status: b.booking_status,
+      cancellation_reason: b.cancellation_reason || null,
+      cancelled_at: b.cancelled_at || null,
       boarding_pass_code: b.boarding_pass_code,
       boarded_at: b.boarded_at,
     }));

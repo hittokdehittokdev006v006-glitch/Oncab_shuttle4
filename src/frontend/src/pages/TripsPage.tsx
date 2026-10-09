@@ -655,7 +655,7 @@ export const TripsPage: React.FC<TripsPageProps> = ({ onNotify }) => {
               emptyMessage="No trips match the selected filters"
             >
               {trips.map((trip) => {
-                const capacity = trip.seat_capacity || 40;
+                const capacity = trip.seat_capacity || trip.vehicle?.total_seats || trip.bus_type?.total_seats || 40;
                 const booked = trip.booked_seats || 0;
                 const pct = Math.min(100, Math.round((booked / capacity) * 100));
 
@@ -887,7 +887,7 @@ export const TripsPage: React.FC<TripsPageProps> = ({ onNotify }) => {
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">CAPACITY</span>
                       <div className="font-semibold text-slate-900 dark:text-white mt-0.5">
-                        {infoTrip.booked_seats || 0}/{infoTrip.seat_capacity || 0}
+                        {infoTrip.booked_seats || 0}/{infoTrip.seat_capacity || infoTrip.vehicle?.total_seats || infoTrip.bus_type?.total_seats || 0}
                       </div>
                     </div>
                   </div>
@@ -895,7 +895,7 @@ export const TripsPage: React.FC<TripsPageProps> = ({ onNotify }) => {
                   <div>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">SEATS</span>
                     <div className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5 font-mono">
-                      {infoTrip.booked_seats || 0} booked • {infoTrip.seat_capacity || 0} total
+                      {infoTrip.booked_seats || 0} booked • {infoTrip.seat_capacity || infoTrip.vehicle?.total_seats || infoTrip.bus_type?.total_seats || 0} total
                     </div>
                   </div>
 

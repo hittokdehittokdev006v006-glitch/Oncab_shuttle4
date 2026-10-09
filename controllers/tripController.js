@@ -79,7 +79,7 @@ const buildPagination = (page, limit) => {
 const TRIP_INCLUDE = [
   { model: Route, as: 'route', attributes: ['id', 'route_name', 'route_code', 'origin_city', 'destination_city'] },
   { model: Driver, as: 'driver', attributes: ['id', 'owner_id', 'name', 'mobile', 'photo'] },
-  { model: Vehicle, as: 'vehicle', attributes: ['id', 'owner_id', 'registration_number', 'company_model', 'color'] },
+  { model: Vehicle, as: 'vehicle', attributes: ['id', 'owner_id', 'registration_number', 'company_model', 'color', 'total_seats'] },
   { model: BusType, as: 'bus_type', attributes: ['id', 'name', 'total_seats'] },
 ];
 
@@ -286,7 +286,40 @@ exports.list = async (req, res, next) => {
       offset, limit: lim,
       order: [['trip_date', 'DESC'], ['departure_time', 'ASC']],
     });
-    res.json({ success: true, data: rows, pagination: { total: count, page: p, limit: lim, pages: Math.ceil(count / lim) } });
+
+    const tripIds = rows.map((t) => t.id);
+    let bookingMap = {};
+    if (tripIds.length > 0) {
+      const bookingCounts = await Booking.findAll({
+        attributes: ['trip_id', [sequelize.fn('SUM', sequelize.col('total_seats')), 'total_booked']],
+        where: {
+          trip_id: { [Op.in]: tripIds },
+          booking_status: 'confirmed',
+          payment_status: 'paid',
+          status: { [Op.notIn]: ['Cancelled', 'cancelled', 'CANCELLED', 'Payment Failed'] },
+        },
+        group: ['trip_id'],
+        raw: true,
+      });
+      bookingCounts.forEach((b) => {
+        bookingMap[b.trip_id] = Number(b.total_booked || 0);
+      });
+    }
+
+    const formattedRows = rows.map((trip) => {
+      const item = trip.toJSON();
+      const cap = Number(
+        item.vehicle?.total_seats
+        || item.bus_type?.total_seats
+        || item.seat_capacity
+        || 40
+      );
+      item.seat_capacity = cap;
+      item.booked_seats = bookingMap[item.id] !== undefined ? bookingMap[item.id] : Number(item.booked_seats || 0);
+      return item;
+    });
+
+    res.json({ success: true, data: formattedRows, pagination: { total: count, page: p, limit: lim, pages: Math.ceil(count / lim) } });
   } catch (err) {
     next(err);
   }
@@ -305,8 +338,24 @@ exports.show = async (req, res, next) => {
       const ownsVehicle = trip.vehicle && Number(trip.vehicle.owner_id) === Number(req.user.id);
       if (!ownsDriver && !ownsVehicle) return res.status(403).json({ success: false, message: 'This trip is not assigned to your fleet' });
     }
-    const bookingsCount = await Booking.count({ where: { trip_id: trip.id, booking_status: { [Op.ne]: 'cancelled' } } });
-    res.json({ success: true, data: { ...trip.toJSON(), bookings_count: bookingsCount } });
+    const bookingsCount = await Booking.count({ where: { trip_id: trip.id, booking_status: 'confirmed', payment_status: 'paid' } });
+    const bookingSum = await Booking.sum('total_seats', {
+      where: {
+        trip_id: trip.id,
+        booking_status: 'confirmed',
+        payment_status: 'paid',
+        status: { [Op.notIn]: ['Cancelled', 'cancelled', 'CANCELLED', 'Payment Failed'] },
+      },
+    });
+    const item = trip.toJSON();
+    item.seat_capacity = Number(
+      item.vehicle?.total_seats
+      || item.bus_type?.total_seats
+      || item.seat_capacity
+      || 40
+    );
+    item.booked_seats = bookingSum !== null && !isNaN(bookingSum) ? Number(bookingSum) : Number(item.booked_seats || 0);
+    res.json({ success: true, data: { ...item, bookings_count: bookingsCount } });
   } catch (err) {
     next(err);
   }
@@ -761,11 +810,18 @@ exports.updateStatus = async (req, res, next) => {
     const trip = await Trip.findByPk(req.params.id);
     if (!trip) return res.status(404).json({ success: false, message: 'Trip not found' });
     const { status } = req.body;
+    const allowedStatuses = ['Scheduled', 'Active', 'Completed', 'Cancelled', 'Delayed'];
+    if (!status || !allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid trip status '${status}'. Allowed values: ${allowedStatuses.join(', ')}`,
+      });
+    }
     const updates = { status };
     if (status === 'Active') updates.started_at = new Date();
     if (status === 'Completed') updates.completed_at = new Date();
     await trip.update(updates);
-    res.json({ success: true, message: `Trip ${status}`, data: trip });
+    res.json({ success: true, message: `Trip status updated to ${status}`, data: trip });
   } catch (err) {
     next(err);
   }

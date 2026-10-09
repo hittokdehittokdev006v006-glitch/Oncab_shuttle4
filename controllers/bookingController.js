@@ -226,6 +226,22 @@ exports.cancel = async (req, res, next) => {
     if (!booking) { await t.rollback(); return res.status(404).json({ success: false, message: 'Booking not found' }); }
     if (booking.booking_status === 'cancelled') { await t.rollback(); return res.status(400).json({ success: false, message: 'Booking already cancelled' }); }
 
+    const isAdmin = req.user && (req.user.role || req.user.role_id);
+    if (!isAdmin) {
+      const createdAt = new Date(booking.created_at || booking.createdAt);
+      const now = new Date();
+      if (!isNaN(createdAt.getTime())) {
+        const minutesSinceBooking = (now.getTime() - createdAt.getTime()) / (1000 * 60);
+        if (minutesSinceBooking > 30) {
+          await t.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Booking cannot be cancelled after 30 minutes of booking creation',
+          });
+        }
+      }
+    }
+
     const wasSeatAllocated = booking.booking_status === 'confirmed' && booking.payment_status === 'paid';
     const { cancellation_reason } = req.body;
     await booking.update({ booking_status: 'cancelled', status: 'Cancelled', cancellation_reason, cancelled_at: new Date(), cancelled_by: req.user?.id }, { transaction: t });
