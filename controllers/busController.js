@@ -1199,6 +1199,23 @@ exports.cancelUserBooking = async (req, res, next) => {
       });
     }
 
+    const isAdmin = req.user && (req.user.role || req.user.role_id);
+    if (!isAdmin) {
+      const createdAt = new Date(booking.created_at || booking.createdAt);
+      const now = new Date();
+      if (!isNaN(createdAt.getTime())) {
+        const minutesSinceBooking = (now.getTime() - createdAt.getTime()) / (1000 * 60);
+        if (minutesSinceBooking > 30) {
+          await t.rollback();
+          return res.status(400).json({
+            status: 400,
+            success: false,
+            message: 'Booking cannot be cancelled after 30 minutes of booking creation',
+          });
+        }
+      }
+    }
+
     const wasSeatAllocated = booking.booking_status === 'confirmed' && booking.payment_status === 'paid';
     await booking.update(
       {
@@ -1562,6 +1579,23 @@ exports.cancelBooking = async (req, res, next) => {
         success: false,
         message: 'Booking is already cancelled',
       });
+    }
+
+    const isAdmin = req.user && (req.user.role || req.user.role_id);
+    if (!isAdmin) {
+      const createdAt = new Date(booking.created_at || booking.createdAt);
+      const now = new Date();
+      if (!isNaN(createdAt.getTime())) {
+        const minutesSinceBooking = (now.getTime() - createdAt.getTime()) / (1000 * 60);
+        if (minutesSinceBooking > 30) {
+          await t.rollback();
+          return res.status(400).json({
+            status: 400,
+            success: false,
+            message: 'Booking cannot be cancelled after 30 minutes of booking creation',
+          });
+        }
+      }
     }
 
     const wasSeatAllocated = booking.booking_status === 'confirmed' && booking.payment_status === 'paid';
